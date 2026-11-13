@@ -45,14 +45,14 @@
       <div class="chips">
         <label class="chip"><input type="checkbox" id="chkFude" hidden>筆ポリゴン</label>
         <label class="chip"><input type="checkbox" id="chkPop" hidden>人口</label>
-        <label class="chip"><input type="checkbox" id="chkBound" hidden>旧市町村界</label>
+        <span class="chipgrp"><label class="chip"><input type="checkbox" id="chkBound" hidden>旧市町村界</label><select id="selBoundYear" aria-label="旧市町村界の年次"></select></span>
         <label class="chip"><input type="checkbox" id="chkUser" hidden>読込データ</label>
       </div>
     </div>
     <div id="vecSub">
       <div class="sub" data-for="chkFude"><div class="legend"><span><i style="background:#64b5f6"></i>田</span><span><i style="background:#ffd54f"></i>畑</span><span>2022年度</span><span id="fudeInfo"></span></div></div>
       <div class="sub" data-for="chkPop"><div id="popLegend" class="legend"></div><div class="legend"><span>令和2年国勢調査 500m</span><span id="popInfo"></span></div></div>
-      <div class="sub" data-for="chkBound"><label class="legend">年次 <select id="selBoundYear"></select></label></div>
+      <div class="sub" data-for="chkUser"><div id="userList"></div></div>
     </div>
   </section>
 

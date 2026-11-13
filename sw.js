@@ -1,5 +1,5 @@
 /* Service Worker: アプリ本体と保存済みタイルをオフラインで返す */
-const SHELL = 'fm-shell-v5';
+const SHELL = 'fm-shell-v6';
 const TILE_CACHE = 'fm-tiles-v1';
 const DATA_CACHE = 'fm-data-v1';
 const SHELL_FILES = [

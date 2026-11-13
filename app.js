@@ -203,6 +203,7 @@ map.on('zoomend', () => { if (curTheme()) buildLayerUI(); });
 function syncChips() {
   document.querySelectorAll('label.chip input').forEach(i => i.parentElement.classList.toggle('on', i.checked));
   document.querySelectorAll('#vecSub .sub').forEach(s => { s.hidden = !$('#' + s.dataset.for).checked; });
+  $('#selBoundYear').hidden = !$('#chkBound').checked;
 }
 document.addEventListener('change', e => { if (e.target.closest?.('label.chip')) syncChips(); });
 
@@ -985,7 +986,13 @@ const userLayer = L.geoJSON(null, {
   onEachFeature: (f, ly) => {
     const rows = Object.entries(f.properties || {}).filter(([k]) => !k.startsWith('_')).slice(0, 30)
       .map(([k, v]) => `<tr><td>${esc(k)}</td><td>${esc(v)}</td></tr>`).join('');
-    ly.bindPopup(`<table>${rows}</table><span class="note">${esc(f.properties?.__src || '')}</span>`, { maxHeight: 300 });
+    const box = document.createElement('div');
+    box.innerHTML = `<table>${rows}</table><span class="note">${esc(f.properties?.__src || '')}</span><br>`;
+    const del = document.createElement('button'); del.className = 'mini';
+    del.textContent = f.properties?._kind === 'catchment' ? 'この集水域を消す' : 'このデータを消す';
+    del.onclick = () => { map.closePopup(); removeUser(f.properties?.__src); };
+    box.appendChild(del);
+    ly.bindPopup(box, { maxHeight: 300 });
   },
 });
 let userData = [];
@@ -1005,6 +1012,11 @@ $('#fileGeo').onchange = async ev => {
   if (!state.user) $('#chkUser').click();
 };
 
+async function removeUser(name) {
+  const u = userData.find(x => x.name === name); if (!u) return;
+  if (!confirm(`「${name}」を消しますか？`)) return;
+  await (await caches.open(LOCAL_CACHE)).delete(u.key); loadLocal();
+}
 async function loadLocal() {
   const lc = await caches.open(LOCAL_CACHE);
   const keys = await lc.keys();
@@ -1023,6 +1035,23 @@ async function loadLocal() {
   }
   refreshPop();
   if (state.user) userLayer.addTo(map);
+  // 地図パネルの一覧（集水域など）
+  const ul = $('#userList'); ul.innerHTML = '';
+  userData.forEach(u => {
+    const d = document.createElement('div'); d.className = 'item';
+    d.innerHTML = `<span></span><button class="mini" data-a="go">表示</button><button class="mini" data-a="del">✕</button>`;
+    d.querySelector('span').textContent = u.name.replace(/\.geojson$/, '');
+    d.querySelector('[data-a=go]').onclick = () => { const b = L.geoJSON(u.gj).getBounds(); if (b.isValid()) map.fitBounds(b, { maxZoom: 16 }); };
+    d.querySelector('[data-a=del]').onclick = () => removeUser(u.name);
+    ul.appendChild(d);
+  });
+  const nCatch = userData.filter(u => u.name.startsWith('集水域')).length;
+  if (nCatch > 1) {
+    const b = document.createElement('button'); b.className = 'mini'; b.textContent = `集水域をすべて消す（${nCatch}件）`;
+    b.onclick = async () => { if (!confirm(`集水域 ${nCatch}件を消しますか？`)) return; const lc = await caches.open(LOCAL_CACHE); for (const u of userData.filter(u => u.name.startsWith('集水域'))) await lc.delete(u.key); loadLocal(); };
+    ul.appendChild(b);
+  }
+  if (!userData.length) ul.innerHTML = '<span class="note">まだありません（集水域の結果や読込んだGeoJSONがここに並びます）</span>';
   const ui = $('#userInfo'); ui.innerHTML = '';
   userData.forEach(u => {
     const d = document.createElement('div'); d.className = 'row';
