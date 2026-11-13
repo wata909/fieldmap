@@ -1,5 +1,5 @@
 /* Service Worker: アプリ本体と保存済みタイルをオフラインで返す */
-const SHELL = 'fm-shell-v3';
+const SHELL = 'fm-shell-v4';
 const TILE_CACHE = 'fm-tiles-v1';
 const DATA_CACHE = 'fm-data-v1';
 const SHELL_FILES = [
@@ -47,7 +47,7 @@ self.addEventListener('fetch', e => {
     e.respondWith((async () => {
       try {
         const r = await fetch(req);
-        if (r.ok && !url.pathname.includes('/local/')) (await caches.open(SHELL)).put(req, r.clone());
+        if (r.ok && !url.pathname.includes('/local/') && !url.pathname.includes('/data/')) (await caches.open(SHELL)).put(req, r.clone());
         return r;
       } catch {
         return (await caches.match(req, { cacheName: SHELL, ignoreSearch: true })) || (await caches.match('index.html', { cacheName: SHELL }));

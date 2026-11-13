@@ -16,6 +16,7 @@ const LAYERS = [
   { id: 'lcm25k_2012', name: '土地条件図', url: GSI + 'lcm25k_2012/{z}/{x}/{y}.png', min: 10, max: 16, op: 0.7, group: '地形分類' },
   { id: 'lcmfc2', name: '治水地形分類図（更新版）', url: GSI + 'lcmfc2/{z}/{x}/{y}.png', min: 11, max: 16, op: 0.7, group: '地形分類' },
   { id: 'geology', name: '20万分の1日本シームレス地質図V2', url: 'https://gbank.gsj.jp/seamless/v2/api/1.2/tiles/{z}/{y}/{x}.png', min: 3, max: 13, op: 0.6, group: '地質', note: 'タップで凡例', attr: GSJ_ATTR },
+  { id: 'dem_png', name: '標高データ（集水域計算用）', url: GSI + 'dem_png/{z}/{x}/{y}.png', min: 8, max: 14, dataOnly: true },
   { id: 'ort_riku10', name: '空中写真 1936〜1942年頃', url: GSI + 'ort_riku10/{z}/{x}/{y}.png', min: 13, max: 18, op: 1, group: '過去の空中写真', note: '一部地域のみ' },
   { id: 'ort_USA10', name: '空中写真 1945〜1950年', url: GSI + 'ort_USA10/{z}/{x}/{y}.png', min: 10, max: 17, op: 1, group: '過去の空中写真' },
   { id: 'ort_old10', name: '空中写真 1961〜1969年', url: GSI + 'ort_old10/{z}/{x}/{y}.png', min: 10, max: 17, op: 1, group: '過去の空中写真' },
@@ -46,10 +47,45 @@ const store = {
   get(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch { return d; } },
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { } },
 };
+const DEFAULT_OVERLAYS = { hillshademap: { on: true, op: 0.5 }, relief: { on: true, op: 0.4 } };
 const state = Object.assign({
-  view: [32.4376, 131.4401, 14], base: 'std', overlays: {}, fude: false, bound: false, boundYear: '19501001', pop: true, user: true,
-}, store.get('fm-state', {}));
-const saveState = () => store.set('fm-state', state);
+  view: [32.4376, 131.4401, 14], base: 'std', overlays: DEFAULT_OVERLAYS, fude: false, bound: false, boundYear: '19501001', pop: true, user: true,
+}, store.get('fm-state2', {}));
+
+/* URLハッシュ: #map=z/lat/lng&b=背景&o=レイヤ:不透明度,...&v=pop,fude,bound:年次
+   これを開けば同じ場所・同じレイヤで地図を共有できる */
+function hashFromState() {
+  const [lat, lng, z] = state.view;
+  const o = Object.entries(state.overlays).filter(([, v]) => v.on).map(([k, v]) => `${k}:${(+v.op).toFixed(2).replace(/0+$/, '').replace(/\.$/, '')}`).join(',');
+  const v = [state.pop && 'pop', state.fude && 'fude', state.bound && 'bound:' + state.boundYear.slice(0, 4)].filter(Boolean).join(',');
+  return `#map=${z}/${(+lat).toFixed(5)}/${(+lng).toFixed(5)}&b=${state.base}` + (o ? `&o=${o}` : '') + (v ? `&v=${v}` : '');
+}
+function applyHash(h) {
+  const q = new URLSearchParams(h.replace(/^#/, ''));
+  const m = (q.get('map') || '').split('/').map(Number);
+  if (m.length !== 3 || m.some(isNaN)) return false;
+  state.view = [m[1], m[2], m[0]];
+  if (q.has('b')) state.base = q.get('b');
+  if (q.has('o') || q.has('b')) {
+    state.overlays = {};
+    (q.get('o') || '').split(',').filter(Boolean).forEach(t => { const [k, op] = t.split(':'); state.overlays[k] = { on: true, op: op ? +op : 0.6 }; });
+  }
+  if (q.has('v') || q.has('b')) {
+    const v = (q.get('v') || '').split(',');
+    state.pop = v.includes('pop'); state.fude = v.includes('fude');
+    const b = v.find(t => t.startsWith('bound')); state.bound = !!b;
+    if (b && b.includes(':')) { const y = b.split(':')[1]; state.boundYear = (typeof BOUND_YEARS !== 'undefined' && BOUND_YEARS.find(d => d.startsWith(y))) || state.boundYear; }
+  }
+  return true;
+}
+applyHash(location.hash);
+let hashTimer;
+const saveState = () => {
+  store.set('fm-state2', state);
+  clearTimeout(hashTimer);
+  hashTimer = setTimeout(() => { const h = hashFromState(); if (location.hash !== h) history.replaceState(null, '', h); }, 300);
+};
+addEventListener('hashchange', () => { if (location.hash !== hashFromState() && applyHash(location.hash)) location.reload(); });
 
 /* ---------------- 地図 ---------------- */
 const map = L.map('map', { zoomControl: true, preferCanvas: true, maxZoom: 19 })
@@ -65,7 +101,7 @@ function makeTile(l) {
     opacity: l.op ?? 1, attribution: l.attr || GSI_ATTR, crossOrigin: !l.opaque,
   });
 }
-LAYERS.forEach(l => { tileLayers[l.id] = makeTile(l); });
+LAYERS.filter(l => !l.dataOnly).forEach(l => { tileLayers[l.id] = makeTile(l); });
 
 // 地図の重なり順
 map.createPane('overPane').style.zIndex = 250;
@@ -83,7 +119,7 @@ function buildLayerUI() {
   });
   const ol = $('#overList'); ol.innerHTML = '';
   let group = '';
-  LAYERS.filter(l => !l.base).forEach(l => {
+  LAYERS.filter(l => !l.base && !l.dataOnly).forEach(l => {
     if (l.group !== group) { group = l.group; const h = document.createElement('div'); h.className = 'note'; h.style.marginTop = '8px'; h.textContent = group; ol.appendChild(h); }
     const o = state.overlays[l.id] || { on: false, op: l.op };
     const lab = document.createElement('div'); lab.className = 'row';
@@ -107,16 +143,16 @@ function setBase(id) {
   state.base = id; saveState();
 }
 function setOverlay(id, on, op) {
-  const t = tileLayers[id];
+  const t = tileLayers[id]; if (!t) return;
   t.setOpacity(op);
   if (on) { if (!map.hasLayer(t)) t.addTo(map); } else map.removeLayer(t);
   // 背景より上、ベクタより下の順序を保つ
-  LAYERS.filter(l => !l.base).forEach(l => { if (map.hasLayer(tileLayers[l.id])) tileLayers[l.id].bringToFront(); });
+  LAYERS.filter(l => !l.base && !l.dataOnly).forEach(l => { if (map.hasLayer(tileLayers[l.id])) tileLayers[l.id].bringToFront(); });
   state.overlays[id] = { on, op }; saveState();
 }
 buildLayerUI();
 setBase(state.base);
-LAYERS.filter(l => !l.base).forEach(l => { const o = state.overlays[l.id]; if (o?.on) setOverlay(l.id, true, o.op); });
+LAYERS.filter(l => !l.base && !l.dataOnly).forEach(l => { const o = state.overlays[l.id]; if (o?.on && tileLayers[l.id]) setOverlay(l.id, true, o.op); });
 
 /* ---------------- パネル ---------------- */
 const panel = $('#panel');
@@ -146,6 +182,20 @@ map.on('locationfound', e => {
 });
 map.on('locationerror', e => { alert('現在地を取得できません: ' + e.message); locating = false; $('#btnLocate').classList.remove('on'); });
 
+/* ---------------- 共有 ---------------- */
+$('#btnShare').onclick = async () => {
+  const url = location.href.split('#')[0] + hashFromState();
+  try {
+    if (navigator.share) { await navigator.share({ title: 'フィールド地図', url }); return; }
+  } catch (e) { if (e.name === 'AbortError') return; }
+  try { await navigator.clipboard.writeText(url); toast('この場所のURLをコピーしました'); }
+  catch { prompt('このURLを共有してください', url); }
+};
+function toast(t) {
+  const d = document.createElement('div'); d.className = 'toast'; d.textContent = t; document.body.appendChild(d);
+  setTimeout(() => d.remove(), 2500);
+}
+
 /* ---------------- オンライン表示 ---------------- */
 const netUpd = () => { $('#netState').hidden = navigator.onLine; };
 addEventListener('online', netUpd); addEventListener('offline', netUpd); netUpd();
@@ -153,7 +203,7 @@ addEventListener('online', netUpd); addEventListener('offline', netUpd); netUpd(
 /* ---------------- 地質図: タップした地点の凡例 ---------------- */
 const geoLegendMemo = store.get('fm-geolegend', {});
 map.on('click', async e => {
-  if (!map.hasLayer(tileLayers.geology)) return;
+  if (catchMode || !map.hasLayer(tileLayers.geology)) return;
   const { lat, lng } = e.latlng;
   const key = `${lat.toFixed(4)},${lng.toFixed(4)}`;
   const show = j => {
@@ -232,7 +282,7 @@ $('#btnSelect').onclick = () => {
 // 保存対象レイヤの選択UI
 function buildDlLayers() {
   const d = $('#dlLayers'); d.innerHTML = '';
-  const saved = store.get('fm-dl-layers2', ['pale', 'seamlessphoto', 'hillshademap', 'ort_old10', 'ort_USA10', 'veg2024', 'lcm25k_2012']);
+  const saved = store.get('fm-dl-layers2', ['pale', 'seamlessphoto', 'hillshademap', 'ort_old10', 'ort_USA10', 'veg2024', 'lcm25k_2012', 'dem_png']);
   LAYERS.forEach(l => {
     const lab = document.createElement('label'); lab.className = 'row';
     lab.innerHTML = `<input type="checkbox" value="${l.id}"> ${l.name} <small>z${l.min}–${l.max}</small>`;
@@ -318,6 +368,7 @@ $('#btnDownload').onclick = async () => {
     await pool(urls, 4, async u => { await fetchToCache(dc, u); });
   }
 
+  if (!cancelFlag) { msg.textContent = '人口メッシュを保存中…'; for (const c of mesh1InBBox(bbox)) { try { await loadPopMesh1(c); } catch { } } }
   const name = $('#areaName').value.trim() || `範囲 ${new Date().toLocaleDateString('ja-JP')}`;
   const areaId = Date.now().toString(36);
   let fudeN = 0;
@@ -545,6 +596,187 @@ async function refreshFude() {
 }
 map.on('moveend', () => { clearTimeout(fudeTimer); fudeTimer = setTimeout(refreshFude, 400); });
 
+/* ================= 流域（集水域）: 地理院DEMから計算 ================= */
+// 地点をタップすると、その地点より上流の集水域を DEM(10m) から求める。
+// 流域が計算範囲の端に達したらズームを下げて（＝範囲を広げて）やり直す。
+let catchMode = false;
+const DEM = LAYER_BY_ID.dem_png;
+const CATCH_TILES = 6;           // 6×6タイル（1536×1536セル）で計算
+const CATCH_ZMAX = 14, CATCH_ZMIN = 8;
+const catchWorkerSrc = `
+self.onmessage = e => {
+  const { h, W, H, px, py, snap } = e.data; const N = W * H;
+  // Priority-Flood（窪地埋め）＋流向: セルは「自分を押し込んだセル」へ流れる
+  const dir = new Int32Array(N).fill(-1), closed = new Uint8Array(N), order = new Int32Array(N);
+  let hk = new Float64Array(1 << 16), hv = new Int32Array(1 << 16), hn = 0, seq = new Float64Array(1 << 16);
+  let sq = 0;
+  const less = (i, j) => hk[i] < hk[j] || (hk[i] === hk[j] && seq[i] < seq[j]);
+  const swap = (i, j) => { let t = hk[i]; hk[i] = hk[j]; hk[j] = t; t = hv[i]; hv[i] = hv[j]; hv[j] = t; t = seq[i]; seq[i] = seq[j]; seq[j] = t; };
+  function push(k, v) {
+    if (hn === hk.length) { const a = new Float64Array(hn * 2); a.set(hk); hk = a; const b = new Int32Array(hn * 2); b.set(hv); hv = b; const c = new Float64Array(hn * 2); c.set(seq); seq = c; }
+    let i = hn++; hk[i] = k; hv[i] = v; seq[i] = sq++;
+    while (i > 0) { const p = (i - 1) >> 1; if (less(i, p)) { swap(i, p); i = p; } else break; }
+  }
+  function pop() {
+    const v = hv[0], k = hk[0]; hn--; hk[0] = hk[hn]; hv[0] = hv[hn]; seq[0] = seq[hn];
+    let i = 0; for (;;) { const l = 2 * i + 1, r = l + 1; let m = i; if (l < hn && less(l, m)) m = l; if (r < hn && less(r, m)) m = r; if (m === i) break; swap(i, m); i = m; }
+    popK = k; return v;
+  }
+  let popK = 0;
+  const q = new Int32Array(N), ql = new Float64Array(N); let qh = 0, qt = 0;
+  const elev = i => (h[i] !== h[i]) ? -1e4 : h[i];      // NaN(海など)は出口
+  for (let x = 0; x < W; x++) for (const y of [0, H - 1]) { const i = y * W + x; if (!closed[i]) { closed[i] = 1; push(elev(i), i); } }
+  for (let y = 1; y < H - 1; y++) for (const x of [0, W - 1]) { const i = y * W + x; if (!closed[i]) { closed[i] = 1; push(elev(i), i); } }
+  const DX = [-1, 0, 1, -1, 1, -1, 0, 1], DY = [-1, -1, -1, 0, 0, 1, 1, 1];
+  let oc = 0;
+  while (qh < qt || hn > 0) {
+    let c, lv;
+    if (qh < qt) { c = q[qh]; lv = ql[qh]; qh++; } else { c = pop(); lv = popK; }
+    order[oc++] = c;
+    const cx = c % W, cy = (c / W) | 0;
+    for (let k = 0; k < 8; k++) {
+      const nx = cx + DX[k], ny = cy + DY[k];
+      if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
+      const n = ny * W + nx; if (closed[n]) continue;
+      closed[n] = 1; dir[n] = c;
+      const he = elev(n);
+      if (he <= lv) { q[qt] = n; ql[qt] = lv; qt++; } else push(he, n);
+    }
+  }
+  // 集水面積（セル数）
+  const acc = new Float64Array(N).fill(1);
+  for (let k = N - 1; k >= 0; k--) { const c = order[k]; if (dir[c] >= 0) acc[dir[c]] += acc[c]; }
+  // 流路へスナップ
+  let pour = py * W + px, best = -1;
+  for (let y = Math.max(0, py - snap); y <= Math.min(H - 1, py + snap); y++)
+    for (let x = Math.max(0, px - snap); x <= Math.min(W - 1, px + snap); x++) {
+      if ((x - px) ** 2 + (y - py) ** 2 > snap * snap) continue;
+      const i = y * W + x; if (h[i] === h[i] && acc[i] > best) { best = acc[i]; pour = i; }
+    }
+  // 上流域: 流下順に、下流側が流域内なら自分も流域内
+  const mask = new Uint8Array(N); mask[pour] = 1; let start = 0;
+  for (let k = 0; k < N; k++) if (order[k] === pour) { start = k; break; }
+  let count = 1, edge = false;
+  for (let k = start + 1; k < N; k++) {
+    const c = order[k];
+    if (dir[c] >= 0 && mask[dir[c]]) {
+      mask[c] = 1; count++;
+      const x = c % W, y = (c / W) | 0; if (x <= 1 || y <= 1 || x >= W - 2 || y >= H - 2) edge = true;  // 外周セルは出口扱いのため、その内側に届いたら範囲不足
+    }
+  }
+  // 主な流路（集水セル数が一定以上）の線分
+  const thr = Math.max(200, count / 400), streams = [];
+  for (let c = 0; c < N; c++) if (mask[c] && acc[c] >= thr && dir[c] >= 0) streams.push(c, dir[c]);
+  self.postMessage({ mask, count, pour, edge, pourElev: h[pour], acc: acc[pour], streams: Int32Array.from(streams) }, [mask.buffer]);
+};`;
+let catchWorker = null;
+function runCatchWorker(msg) {
+  catchWorker ??= new Worker(URL.createObjectURL(new Blob([catchWorkerSrc], { type: 'text/javascript' })));
+  return new Promise((ok, ng) => { catchWorker.onmessage = e => ok(e.data); catchWorker.onerror = e => { catchWorker = null; ng(e); }; catchWorker.postMessage(msg); });
+}
+async function demTile(z, x, y) {
+  const url = DEM.url.replace('{z}', z).replace('{x}', x).replace('{y}', y);
+  let r = await (await caches.open(TILE_CACHE)).match(url);
+  if (!r) { try { r = await fetch(url, { mode: 'cors' }); } catch { r = null; } }
+  if (!r || !r.ok) return null;
+  const bmp = await createImageBitmap(await r.blob());
+  const cv = document.createElement('canvas'); cv.width = cv.height = 256;
+  const ctx = cv.getContext('2d', { willReadFrequently: true }); ctx.drawImage(bmp, 0, 0);
+  return ctx.getImageData(0, 0, 256, 256).data;
+}
+async function demGrid(z, tx0, ty0, n) {
+  const W = n * 256, h = new Float32Array(W * W).fill(NaN); let missing = 0;
+  const jobs = [];
+  for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) jobs.push((async () => {
+    const d = await demTile(z, tx0 + i, ty0 + j); if (!d) { missing++; return; }
+    for (let p = 0; p < 65536; p++) {
+      const v = d[p * 4] * 65536 + d[p * 4 + 1] * 256 + d[p * 4 + 2];
+      if (v === 8388608 || d[p * 4 + 3] === 0) continue;
+      h[(j * 256 + (p >> 8)) * W + i * 256 + (p & 255)] = (v < 8388608 ? v : v - 16777216) * 0.01;
+    }
+  })());
+  await Promise.all(jobs);
+  return { h, W, missing };
+}
+const pix2lon = (X, z) => X / (256 * 2 ** z) * 360 - 180;
+const pix2lat = (Y, z) => Math.atan(Math.sinh(Math.PI * (1 - 2 * Y / (256 * 2 ** z)))) * 180 / Math.PI;
+function maskToRing(mask, W, H) {
+  // マスクの外周をたどって最大のリングを返す（ピクセル角の座標）
+  const out = new Map(); const key = (x, y) => y * (W + 1) + x;
+  const add = (x1, y1, x2, y2) => { const k = key(x1, y1); (out.get(k) || out.set(k, []).get(k)).push(key(x2, y2)); };
+  const m = (x, y) => x >= 0 && y >= 0 && x < W && y < H && mask[y * W + x];
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    if (!mask[y * W + x]) continue;
+    if (!m(x, y - 1)) add(x, y, x + 1, y);
+    if (!m(x + 1, y)) add(x + 1, y, x + 1, y + 1);
+    if (!m(x, y + 1)) add(x + 1, y + 1, x, y + 1);
+    if (!m(x - 1, y)) add(x, y + 1, x, y);
+  }
+  let best = [];
+  for (const [k0] of out) {
+    if (!out.get(k0)?.length) continue;
+    const ring = []; let k = k0;
+    while (out.get(k)?.length) { ring.push(k); const nx = out.get(k).pop(); if (!out.get(k).length) out.delete(k); k = nx; if (k === k0) break; }
+    if (ring.length > best.length) best = ring;
+  }
+  // 直線上の頂点を間引く
+  const pts = best.map(k => [k % (W + 1), Math.floor(k / (W + 1))]); const res = [];
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[(i - 1 + pts.length) % pts.length], b = pts[i], c = pts[(i + 1) % pts.length];
+    if ((b[0] - a[0]) * (c[1] - b[1]) !== (b[1] - a[1]) * (c[0] - b[0])) res.push(b);
+  }
+  return res;
+}
+async function delineate(latlng) {
+  toast('集水域を計算中…（数秒〜数十秒）');
+  for (let z = CATCH_ZMAX; z >= CATCH_ZMIN; z--) {
+    const X = (latlng.lng + 180) / 360 * 256 * 2 ** z;
+    const r = latlng.lat * Math.PI / 180, Y = (1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2 * 256 * 2 ** z;
+    const tx0 = Math.floor(X / 256) - CATCH_TILES / 2 + 1, ty0 = Math.floor(Y / 256) - CATCH_TILES / 2 + 1;
+    const { h, W, missing } = await demGrid(z, tx0, ty0, CATCH_TILES);
+    if (missing === CATCH_TILES ** 2) { toast(navigator.onLine ? '標高データがありません' : 'この範囲の標高データが端末にありません'); return; }
+    const px = Math.floor(X - tx0 * 256), py = Math.floor(Y - ty0 * 256);
+    const res = await runCatchWorker({ h, W, H: W, px, py, snap: Math.max(2, 6 - (CATCH_ZMAX - z)) });
+    if (res.edge && z > CATCH_ZMIN) continue;            // 範囲を広げてやり直し
+    const ring = maskToRing(res.mask, W, W).map(([x, y]) => [+pix2lon(tx0 * 256 + x, z).toFixed(6), +pix2lat(ty0 * 256 + y, z).toFixed(6)]);
+    if (ring.length < 3) { toast('集水域を求められませんでした'); return; }
+    ring.push(ring[0]);
+    const cell = 40075016.686 * Math.cos(r) / (256 * 2 ** z);
+    const area = res.count * cell * cell / 1e6;
+    const pc = res.pour % W, pr = Math.floor(res.pour / W);
+    const pour = [+pix2lon(tx0 * 256 + pc + .5, z).toFixed(6), +pix2lat(ty0 * 256 + pr + .5, z).toFixed(6)];
+    const streams = []; for (let i = 0; i < res.streams.length; i += 2) {
+      const a = res.streams[i], b = res.streams[i + 1];
+      streams.push([[+pix2lon(tx0 * 256 + a % W + .5, z).toFixed(6), +pix2lat(ty0 * 256 + Math.floor(a / W) + .5, z).toFixed(6)],
+                    [+pix2lon(tx0 * 256 + b % W + .5, z).toFixed(6), +pix2lat(ty0 * 256 + Math.floor(b / W) + .5, z).toFixed(6)]]);
+    }
+    const name = `集水域 ${pour[1].toFixed(4)},${pour[0].toFixed(4)}`;
+    const props = { _kind: 'catchment', 名称: name, '面積(km2)': +area.toFixed(area < 10 ? 3 : 1), '流出点標高(m)': +res.pourElev.toFixed(1),
+      '計算解像度(m)': Math.round(cell), 'DEM': '地理院 DEM10B (dem_png z' + z + ')', ...(res.edge ? { '注意': '計算範囲の端に達しています。実際の流域はさらに大きい可能性があります' } : {}) };
+    const gj = { type: 'FeatureCollection', features: [
+      { type: 'Feature', properties: props, geometry: { type: 'Polygon', coordinates: [ring] } },
+      { type: 'Feature', properties: { _kind: 'catchment', 名称: name + '（流出点）' }, geometry: { type: 'Point', coordinates: pour } },
+      ...(streams.length ? [{ type: 'Feature', properties: { _kind: 'catchment', 名称: name + '（主な流路・DEMから推定）' }, geometry: { type: 'MultiLineString', coordinates: streams } }] : []),
+    ] };
+    const lc = await caches.open(LOCAL_CACHE);
+    await lc.put(LOCAL_PREFIX + 'geo/' + encodeURIComponent(name + '.geojson'), new Response(JSON.stringify(gj), { headers: { 'content-type': 'application/json' } }));
+    await loadLocal(); if (!state.user) $('#chkUser').click();
+    const b = L.geoJSON(gj).getBounds(); if (!map.getBounds().contains(b)) map.fitBounds(b, { padding: [20, 20] });
+    toast(`集水域 ${props['面積(km2)']} km²（解像度 約${Math.round(cell)}m）`);
+    return;
+  }
+}
+function setCatchMode(on) {
+  catchMode = on; $('#btnCatch').classList.toggle('primary', on);
+  $('#btnCatch').textContent = on ? '地点をタップしてください（もう一度押すと中止）' : '集水域を求める（地点をタップ）';
+  map.getContainer().style.cursor = on ? 'crosshair' : '';
+}
+$('#btnCatch').onclick = () => { setCatchMode(!catchMode); if (catchMode) { toast('流域を求めたい地点（川の上）をタップ'); if (innerWidth < 700) panel.classList.remove('open'); } };
+map.on('click', async e => {
+  if (!catchMode) return; setCatchMode(false);
+  try { await delineate(e.latlng); } catch (err) { console.warn(err); toast('計算に失敗しました'); }
+});
+
 /* ================= 地域メッシュ ================= */
 // メッシュコード → [w,s,e,n]（1次4桁, 2次6桁, 3次8桁, 1/2 9桁, 1/4 10桁）
 function meshBBox(code) {
@@ -576,21 +808,56 @@ const popColor = v => { let i = -1; POP_BREAKS.forEach((b, k) => { if (v >= b) i
 $('#popLegend').innerHTML = POP_BREAKS.map((b, i) => `<span><i style="background:${POP_COLORS[i]}"></i>${b}${POP_BREAKS[i + 1] ? '–' + (POP_BREAKS[i + 1] - 1) : '+'}</span>`).join('') + '<span>人/メッシュ</span>';
 
 const popLayer = L.layerGroup();
-let popData = []; // [{code, pop, male, female, hh, src}]
-function renderPop() {
-  popLayer.clearLayers();
-  const renderer = L.canvas({ pane: 'vecPane' });
-  popData.forEach(d => {
-    const col = popColor(d.pop); if (!col) return;
-    const [w, s, e, n] = meshBBox(d.code);
-    L.rectangle([[s, w], [n, e]], { renderer, pane: 'vecPane', bubblingMouseEvents: false, weight: .3, color: '#555', fillColor: col, fillOpacity: .55 })
-      .bindPopup(() => `<b>メッシュ ${d.code}</b><table><tr><td>人口</td><td>${d.pop ?? '秘匿'}</td></tr><tr><td>男</td><td>${d.male ?? '-'}</td></tr><tr><td>女</td><td>${d.female ?? '-'}</td></tr>${d.hh != null ? `<tr><td>世帯数</td><td>${d.hh}</td></tr>` : ''}</table><span class="note">${esc(d.src)}</span>`)
-      .addTo(popLayer);
-  });
-  $('#popInfo').textContent = popData.length ? `読込済 ${popData.length.toLocaleString()} メッシュ` : '';
+const POP_BASE = new URL('data/pop500/', location.href).href;
+const POP_MINZOOM = 10;
+const popGroups = new Map();   // 1次メッシュ → layerGroup
+let popData = [];               // 読込済の全メッシュ [{code, pop, male, female, hh, src}]
+let popIndex = null, popTimer;
+const popRenderer = L.canvas({ pane: 'vecPane' });
+function popRect(d) {
+  const col = popColor(d.pop); if (!col) return null;
+  const [w, s, e, n] = meshBBox(d.code);
+  return L.rectangle([[s, w], [n, e]], { renderer: popRenderer, pane: 'vecPane', bubblingMouseEvents: false, weight: .3, color: '#555', fillColor: col, fillOpacity: .5 })
+    .bindPopup(() => `<b>500mメッシュ ${d.code}</b><table><tr><td>人口</td><td>${d.pop ?? '秘匿'}</td></tr><tr><td>男</td><td>${d.male ?? '-'}</td></tr><tr><td>女</td><td>${d.female ?? '-'}</td></tr>${d.hh != null ? `<tr><td>世帯数</td><td>${d.hh}</td></tr>` : ''}</table><span class="note">${esc(d.src)}</span>`);
 }
+function addPopRows(key, rows) {
+  popGroups.get(key)?.remove();
+  const g = L.layerGroup(); rows.forEach(d => { const r = popRect(d); if (r) g.addLayer(r); });
+  popGroups.set(key, g); popLayer.addLayer(g);
+  popData = popData.filter(d => d.__k !== key).concat(rows.map(d => Object.assign(d, { __k: key })));
+}
+function parsePopCsv(text, src) {
+  const n = v => v === '' || v === undefined ? null : +v;
+  return text.trim().split('\n').slice(1).map(l => { const [code, pop, male, female, hh] = l.split(','); return { code, pop: n(pop), male: n(male), female: n(female), hh: n(hh), src }; });
+}
+async function cachedText(url) {
+  const c = await caches.open(DATA_CACHE);
+  let r = await c.match(url);
+  if (!r) { r = await fetch(url); if (!r.ok) throw new Error(r.status); await c.put(url, r.clone()); }
+  return r.text();
+}
+async function loadPopMesh1(code) {
+  if (popGroups.has(code)) return;
+  if (!popIndex) popIndex = new Set(JSON.parse(await cachedText(POP_BASE + 'index.json')));
+  if (!popIndex.has(code)) return;
+  popGroups.set(code, null);
+  try { addPopRows(code, parsePopCsv(await cachedText(POP_BASE + code + '.csv'), '令和2年国勢調査 500mメッシュ（e-Stat）')); }
+  catch (e) { popGroups.delete(code); throw e; }
+}
+async function refreshPop() {
+  const info = $('#popInfo');
+  if (!state.pop) { map.removeLayer(popLayer); info.textContent = ''; return; }
+  popLayer.addTo(map);
+  if (map.getZoom() < POP_MINZOOM) { info.textContent = `ズーム${POP_MINZOOM}以上で表示します`; return; }
+  const b = map.getBounds();
+  try {
+    for (const c of mesh1InBBox([b.getWest(), b.getSouth(), b.getEast(), b.getNorth()])) await loadPopMesh1(c);
+    info.textContent = `読込済 ${popData.length.toLocaleString()} メッシュ`;
+  } catch { info.textContent = '人口データを読込めませんでした（オフライン時は保存済み範囲のみ）'; }
+}
+map.on('moveend', () => { clearTimeout(popTimer); popTimer = setTimeout(refreshPop, 300); });
 $('#chkPop').checked = state.pop;
-$('#chkPop').onchange = () => { state.pop = $('#chkPop').checked; saveState(); state.pop ? popLayer.addTo(map) : map.removeLayer(popLayer); };
+$('#chkPop').onchange = () => { state.pop = $('#chkPop').checked; saveState(); refreshPop(); };
 
 function parseStatText(text, src) {
   const lines = text.split(/\r?\n/).filter(Boolean);
@@ -639,10 +906,12 @@ $('#fileStat').onchange = async ev => {
 /* ================= 任意のGeoJSON（遺跡など） ================= */
 const userLayer = L.geoJSON(null, {
   pane: 'vecPane',
-  style: { color: '#c0392b', weight: 2, fillOpacity: .2, bubblingMouseEvents: false },
+  style: f => f.properties?._kind === 'catchment'
+    ? { color: '#0b6e99', weight: 2.5, fillColor: '#29a3d6', fillOpacity: .15, dashArray: '6 3', bubblingMouseEvents: false }
+    : { color: '#c0392b', weight: 2, fillOpacity: .2, bubblingMouseEvents: false },
   pointToLayer: (f, ll) => L.circleMarker(ll, { radius: 6, bubblingMouseEvents: false, color: '#fff', weight: 2, fillColor: '#c0392b', fillOpacity: .9, pane: 'vecPane' }),
   onEachFeature: (f, ly) => {
-    const rows = Object.entries(f.properties || {}).filter(([k]) => k !== '__src').slice(0, 30)
+    const rows = Object.entries(f.properties || {}).filter(([k]) => !k.startsWith('_')).slice(0, 30)
       .map(([k, v]) => `<tr><td>${esc(k)}</td><td>${esc(v)}</td></tr>`).join('');
     ly.bindPopup(`<table>${rows}</table><span class="note">${esc(f.properties?.__src || '')}</span>`, { maxHeight: 300 });
   },
@@ -667,20 +936,20 @@ $('#fileGeo').onchange = async ev => {
 async function loadLocal() {
   const lc = await caches.open(LOCAL_CACHE);
   const keys = await lc.keys();
-  popData = []; userData = []; userLayer.clearLayers();
+  userData = []; userLayer.clearLayers();
+  [...popGroups.keys()].filter(k => k.startsWith('local:')).forEach(k => { popGroups.get(k)?.remove(); popGroups.delete(k); popData = popData.filter(d => d.__k !== k); });
   const info = [];
   for (const k of keys) {
     const rel = k.url.slice(LOCAL_PREFIX.length);
     const j = await (await lc.match(k)).json();
-    if (rel.startsWith('pop/')) popData = popData.concat(j);
+    if (rel.startsWith('pop/')) addPopRows('local:' + rel, j);
     if (rel.startsWith('geo/')) {
       const name = decodeURIComponent(rel.slice(4));
       (j.features || [j]).forEach(f => { f.properties = Object.assign({}, f.properties, { __src: name }); });
       userData.push({ name, gj: j, key: k.url }); userLayer.addData(j); info.push(name);
     }
   }
-  renderPop();
-  if (state.pop) popLayer.addTo(map);
+  refreshPop();
   if (state.user) userLayer.addTo(map);
   const ui = $('#userInfo'); ui.innerHTML = '';
   userData.forEach(u => {
@@ -743,7 +1012,7 @@ $('#btnExport').onclick = async () => {
     if (feats.length) files[`boundaries/city_${y}.geojson`] = enc.encode(fc(feats));
   }
   // 人口メッシュ
-  const pf = popData.filter(d => inBBox(meshBBox(d.code), a.bbox)).map(d => {
+  const pf = popData.filter(d => d.code && inBBox(meshBBox(d.code), a.bbox)).map(d => {
     const [mw, ms, me, mn] = meshBBox(d.code);
     return { type: 'Feature', properties: { KEY_CODE: d.code, pop: d.pop, male: d.male, female: d.female, households: d.hh }, geometry: { type: 'Polygon', coordinates: [[[mw, ms], [me, ms], [me, mn], [mw, mn], [mw, ms]]] } };
   });
