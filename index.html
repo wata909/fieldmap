@@ -17,95 +17,122 @@
 <body>
 <div id="map"></div>
 
-<div id="fabs">
-  <button id="btnPanel" class="fab" aria-label="メニュー">☰</button>
-  <button id="btnLocate" class="fab" aria-label="現在地">◎</button>
-  <button id="btnShare" class="fab" aria-label="この場所を共有">⤴</button>
-</div>
 <div id="netState" hidden>オフライン</div>
+<div id="catchBar" hidden>流域を求めたい地点（川の上）をタップ <button id="catchCancel" aria-label="中止">✕</button></div>
+
+<nav id="toolbar">
+  <button data-view="layers"><span class="ic">◧</span>地図</button>
+  <button id="btnLocate"><span class="ic">◎</span>現在地</button>
+  <button id="btnCatch"><span class="ic">💧</span>集水域</button>
+  <button data-view="dl"><span class="ic">⬇</span>保存</button>
+  <button data-view="more"><span class="ic">⋯</span>その他</button>
+</nav>
 
 <aside id="panel" aria-hidden="true">
-  <header>
-    <nav class="tabs">
-      <button data-tab="layers" class="on">レイヤ</button>
-      <button data-tab="dl">範囲保存</button>
-      <button data-tab="data">データ</button>
-    </nav>
-    <button id="btnClose" class="x" aria-label="閉じる">×</button>
-  </header>
+  <header><b id="panelTitle"></b><button id="btnClose" class="x" aria-label="閉じる">×</button></header>
 
-  <section id="tab-layers" class="tab on">
-    <h3>背景地図</h3>
-    <div id="baseList"></div>
-    <h3>重ねる地図</h3>
-    <div id="overList"></div>
-    <h3>ベクタ</h3>
-    <label class="row"><input type="checkbox" id="chkBound"> 旧市町村界
-      <select id="selBoundYear"></select></label>
-    <label class="row"><input type="checkbox" id="chkFude"> 農地の筆ポリゴン（2022年度）</label>
-    <div class="legend"><span><i style="background:#64b5f6"></i>田</span><span><i style="background:#ffd54f"></i>畑</span><span id="fudeInfo"></span></div>
-    <label class="row"><input type="checkbox" id="chkPop"> 人口メッシュ（令和2年国勢調査 500m）</label>
-    <div id="popLegend" class="legend"></div>
-    <label class="row"><input type="checkbox" id="chkUser"> 読込んだGeoJSON（遺跡など）</label>
-    <h3>流域</h3>
-    <p class="note">地点（川の上）をタップすると、地理院の標高データ（10m）からその地点より上流の集水域と主な流路を計算して表示します。結果は「データ」タブのGeoJSON一覧に保存され、ZIP書き出しにも入ります。圏外では「範囲保存」で標高データを保存した範囲だけ計算できます。</p>
-    <button id="btnCatch" class="btn">集水域を求める（地点をタップ）</button>
-    <h3>遺跡</h3>
-    <p class="note">文化財総覧WebGISはAPIが公開されていないため、現在の表示位置で開くリンクにしています。都道府県が公開している遺跡GeoJSONは「データ」タブから読込めます。</p>
-    <button id="btnHeritage" class="btn">文化財総覧WebGISでこの場所を開く ↗</button>
+  <!-- ===== 地図（レイヤ） ===== -->
+  <section id="view-layers" class="view">
+    <div class="lrow"><span class="lab">背景</span><div id="baseSeg" class="seg"></div></div>
+
+    <div class="lrow"><span class="lab">地形</span><div id="terrSeg" class="chips"></div></div>
+    <div id="terrOps"></div>
+
+    <div class="lrow"><span class="lab">主題図</span><div id="themeSeg" class="chips"></div></div>
+    <div id="themeSub"></div>
+
+    <div class="lrow"><span class="lab">重ねる</span>
+      <div class="chips">
+        <label class="chip"><input type="checkbox" id="chkFude" hidden>筆ポリゴン</label>
+        <label class="chip"><input type="checkbox" id="chkPop" hidden>人口</label>
+        <label class="chip"><input type="checkbox" id="chkBound" hidden>旧市町村界</label>
+        <label class="chip"><input type="checkbox" id="chkUser" hidden>読込データ</label>
+      </div>
+    </div>
+    <div id="vecSub">
+      <div class="sub" data-for="chkFude"><div class="legend"><span><i style="background:#64b5f6"></i>田</span><span><i style="background:#ffd54f"></i>畑</span><span>2022年度</span><span id="fudeInfo"></span></div></div>
+      <div class="sub" data-for="chkPop"><div id="popLegend" class="legend"></div><div class="legend"><span>令和2年国勢調査 500m</span><span id="popInfo"></span></div></div>
+      <div class="sub" data-for="chkBound"><label class="legend">年次 <select id="selBoundYear"></select></label></div>
+    </div>
   </section>
 
-  <section id="tab-dl" class="tab">
-    <ol class="steps">
-      <li><button id="btnSelect" class="btn">範囲を指定</button>
-        <span class="note">地図上の四角の角をドラッグして調整</span></li>
-      <li>保存するレイヤ<div id="dlLayers"></div></li>
-      <li>ズーム
-        <label>最小 <input type="number" id="zMin" min="2" max="18" value="12"></label>
-        <label>最大 <input type="number" id="zMax" min="2" max="18" value="16"></label></li>
-      <li><label><input type="checkbox" id="dlBound" checked> 旧市町村界（全年次）</label><br><label><input type="checkbox" id="dlFude" checked> 農地の筆ポリゴン</label></li>
-      <li>名前 <input type="text" id="areaName" placeholder="例: 調査地A"></li>
-    </ol>
+  <!-- ===== 範囲保存 ===== -->
+  <section id="view-dl" class="view">
+    <p class="note">赤い四角の範囲を端末に保存します。角の●をドラッグで調整。</p>
+    <div class="btnrow"><button id="btnSelect" class="btn">今の画面に合わせる</button></div>
     <div id="dlEstimate" class="est"></div>
+    <div class="lrow"><span class="lab">名前</span><input type="text" id="areaName" placeholder="例: 調査地A"></div>
     <div class="btnrow">
-      <button id="btnDownload" class="btn primary">端末に保存（オフライン用）</button>
+      <button id="btnDownload" class="btn primary">端末に保存</button>
       <button id="btnCancel" class="btn" hidden>中止</button>
     </div>
     <progress id="dlProg" value="0" max="1" hidden></progress>
     <div id="dlMsg" class="note"></div>
 
-    <h3>保存済みの範囲</h3>
-    <div id="areaList"></div>
-    <div id="storageInfo" class="note"></div>
+    <details>
+      <summary>保存する内容・ズーム</summary>
+      <p class="note">開いたときに、表示中の地図＋標高データ（集水域用）が選ばれます。</p>
+      <div id="dlLayers"></div>
+      <div class="lrow">ズーム <input type="number" id="zMin" min="2" max="18" value="12"> 〜 <input type="number" id="zMax" min="2" max="18" value="16"></div>
+      <label class="row"><input type="checkbox" id="dlBound" checked> 旧市町村界（全年次）</label>
+      <label class="row"><input type="checkbox" id="dlFude" checked> 農地の筆ポリゴン</label>
+      <p class="note">人口メッシュは範囲内の分が自動で保存されます。</p>
+    </details>
+
+    <details id="areasBox" open>
+      <summary>保存済みの範囲</summary>
+      <div id="areaList"></div>
+      <div id="storageInfo" class="note"></div>
+    </details>
   </section>
 
-  <section id="tab-data" class="tab">
-    <h3>人口メッシュ（別の統計表を使う場合）</h3>
-    <p class="note">令和2年国勢調査の500mメッシュ人口は最初から入っています。他の年次・統計表を使いたい場合は、e-StatのZIPを端末にダウンロードして読込めます（範囲を指定すると対象の1次メッシュのリンクが出ます）。</p>
-    <div id="meshLinks"></div>
-    <label class="btn file">e-StatのZIP/TXTを読込む<input type="file" id="fileStat" accept=".zip,.txt,.csv" multiple hidden></label>
-    <div id="popInfo" class="note"></div>
+  <!-- ===== その他 ===== -->
+  <section id="view-more" class="view">
+    <div class="btnrow">
+      <button id="btnShare" class="btn">⤴ この場所を共有</button>
+      <button id="btnHeritage" class="btn">遺跡（文化財総覧WebGIS）↗</button>
+    </div>
+    <p class="note">共有URLには、場所・ズーム・表示中のレイヤが入ります。</p>
 
-    <h3>GeoJSON（遺跡地図など）</h3>
-    <label class="btn file">GeoJSONを読込む<input type="file" id="fileGeo" accept=".geojson,.json" multiple hidden></label>
-    <div id="userInfo" class="note"></div>
+    <details>
+      <summary>データの読込（遺跡GeoJSONなど）</summary>
+      <label class="btn file">GeoJSONを読込む<input type="file" id="fileGeo" accept=".geojson,.json" multiple hidden></label>
+      <div id="userInfo" class="note"></div>
+      <p class="note">人口メッシュは令和2年国勢調査500mが入っています。別の統計表を使うときは e-Stat のZIPを読込めます（保存範囲を指定すると対象メッシュのリンクが出ます）。</p>
+      <div id="meshLinks"></div>
+      <label class="btn file">e-StatのZIP/TXTを読込む<input type="file" id="fileStat" accept=".zip,.txt,.csv" multiple hidden></label>
+    </details>
 
-    <h3>書き出し</h3>
-    <p class="note">保存済み範囲のタイルとベクタをZIPで書き出します（QGIS等で利用可）。現存植生図2024タイルは配信元の設定上アプリから読み出せないため含めません（G空間情報センターでGPKGを入手できます）。</p>
-    <select id="selExportArea"></select>
-    <button id="btnExport" class="btn">ZIPで書き出し</button>
-    <div id="expMsg" class="note"></div>
+    <details>
+      <summary>ZIPで書き出し（QGIS等）</summary>
+      <p class="note">保存済み範囲のタイルとベクタを書き出します。植生図タイルは配信元の設定上含められません。</p>
+      <select id="selExportArea"></select>
+      <button id="btnExport" class="btn">書き出し</button>
+      <div id="expMsg" class="note"></div>
+    </details>
 
-    <h3>出典</h3>
-    <ul class="note credits">
-      <li>地理院タイル（国土地理院）</li>
-      <li>地質図：産総研地質調査総合センター「20万分の1日本シームレス地質図V2」（CC BY 4.0）</li>
-      <li>植生図：環境省生物多様性センター「現存植生図2024」ラスタタイル（G空間情報センター掲載、公共データ利用規約 第1.0版）</li>
-      <li>旧市町村界：歴史的行政区域データセットβ版（CODH）、国土交通省「国土数値情報（行政区域データ）」をもとにNIIが加工</li>
-      <li>筆ポリゴン：農林水産省「筆ポリゴンデータ（2022年度公開）」（農研機構 公開のFlatGeobuf版を利用）</li>
-      <li>集水域：地理院タイル（標高タイル DEM10B）からアプリ内で計算</li>
-      <li>人口：総務省統計局 国勢調査 地域メッシュ統計（e-Stat）</li>
-    </ul>
+    <details>
+      <summary>使い方</summary>
+      <ul class="note credits">
+        <li>集水域：💧を押して川の上をタップ。地理院の標高データ（10m）からその地点より上流の集水域と主な流路を計算します。結果は読込データとして残り、ZIPにも入ります。圏外では標高データを保存した範囲だけ計算できます。</li>
+        <li>地質図：表示中に地図をタップすると、その地点の凡例が出ます。</li>
+        <li>遺跡：文化財総覧WebGISはAPIが非公開のため、今の場所で開くリンクにしています。</li>
+        <li>主題図（地質・植生など）は1つ選び、地形（陰影・色別標高）はその上に乗算で重なります。</li>
+      </ul>
+    </details>
+
+    <details>
+      <summary>出典</summary>
+      <ul class="note credits">
+        <li>地理院タイル（国土地理院）</li>
+        <li>地質図：産総研地質調査総合センター「20万分の1日本シームレス地質図V2」（CC BY 4.0）</li>
+        <li>植生図：環境省生物多様性センター「現存植生図2024」ラスタタイル（G空間情報センター掲載、公共データ利用規約 第1.0版）</li>
+        <li>旧市町村界：歴史的行政区域データセットβ版（CODH）、国土交通省「国土数値情報（行政区域データ）」をもとにNIIが加工</li>
+        <li>筆ポリゴン：農林水産省「筆ポリゴンデータ（2022年度公開）」（農研機構 公開のFlatGeobuf版を利用）</li>
+        <li>集水域：地理院タイル（標高タイル DEM10B）からアプリ内で計算</li>
+        <li>人口：総務省統計局 国勢調査 地域メッシュ統計（e-Stat）</li>
+      </ul>
+    </details>
   </section>
 </aside>
 

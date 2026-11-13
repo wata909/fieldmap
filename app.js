@@ -94,48 +94,94 @@ L.control.scale({ imperial: false }).addTo(map);
 map.attributionControl.setPrefix(false);
 map.on('moveend', () => { const c = map.getCenter(); state.view = [c.lat, c.lng, map.getZoom()]; saveState(); });
 
+// 重なり順: 背景(tilePane 200) → 主題図(250) → 地形(270, 乗算で重ねて下の色を残す) → ベクタ(420)
+map.createPane('themePane').style.zIndex = 250;
+const terrPane = map.createPane('terrPane'); terrPane.style.zIndex = 270; terrPane.style.mixBlendMode = 'multiply';
 const tileLayers = {};
 function makeTile(l) {
   return L.tileLayer(l.url, {
+    pane: l.base ? 'tilePane' : l.group === '地形' ? 'terrPane' : 'themePane',
     minNativeZoom: l.min, maxNativeZoom: l.max, minZoom: l.base ? 0 : Math.max(l.min - 2, 0), maxZoom: 19,
     opacity: l.op ?? 1, attribution: l.attr || GSI_ATTR, crossOrigin: !l.opaque,
   });
 }
 LAYERS.filter(l => !l.dataOnly).forEach(l => { tileLayers[l.id] = makeTile(l); });
 
-// 地図の重なり順
-map.createPane('overPane').style.zIndex = 250;
 map.createPane('vecPane').style.zIndex = 420;
 
-/* ---------------- レイヤUI ---------------- */
+/* ---------------- レイヤUI: 背景 1つ ＋ 地形（陰影・色別標高） ＋ 主題図 1つ ---------------- */
+const TERRAIN_IDS = ['hillshademap', 'relief'];
+const TERRAIN_SHORT = { hillshademap: '陰影起伏', relief: '色別標高' };
+// 主題図は種類ごとにまとめ、種類の中から1枚を選ぶ
+const THEMES = [
+  { key: 'geology', name: '地質', ids: ['geology'] },
+  { key: 'veg', name: '植生', ids: ['veg2024'] },
+  { key: 'landform', name: '地形分類', ids: ['lcm25k_2012', 'lcmfc2'] },
+  { key: 'photo', name: '古写真', ids: ['ort_riku10', 'ort_USA10', 'ort_old10', 'gazo1', 'gazo2', 'gazo3', 'gazo4'] },
+];
+const THEME_IDS = THEMES.flatMap(t => t.ids);
+const themeOf = id => THEMES.find(t => t.ids.includes(id));
+const BASE_SHORT = { std: '標準', pale: '淡色', seamlessphoto: '写真' };
+const lastPick = store.get('fm-theme-pick', {}); // 種類ごとに最後に選んだレイヤ
+
+// 主題図は1枚だけ（古いURLや保存状態で複数入っていたら最初の1枚に絞る）
+(() => {
+  const on = THEME_IDS.filter(id => state.overlays[id]?.on);
+  on.slice(1).forEach(id => { state.overlays[id].on = false; });
+})();
+const curTheme = () => THEME_IDS.find(id => state.overlays[id]?.on) || '';
+const opOf = id => state.overlays[id]?.op ?? LAYER_BY_ID[id].op ?? 1;
+
+function slider(id, label) {
+  const d = document.createElement('div'); d.className = 'oprow';
+  d.innerHTML = `<span>${label}</span><input type="range" min="0.1" max="1" step="0.05" aria-label="${label}の不透明度">`;
+  const r = d.querySelector('input'); r.value = opOf(id);
+  r.oninput = () => setOverlay(id, true, +r.value);
+  return d;
+}
+function chip(text, on, onclick) {
+  const b = document.createElement('button'); b.className = 'chip' + (on ? ' on' : ''); b.textContent = text; b.onclick = onclick; return b;
+}
 function buildLayerUI() {
-  const bl = $('#baseList'); bl.innerHTML = '';
-  LAYERS.filter(l => l.base).forEach(l => {
-    const lab = document.createElement('label'); lab.className = 'row';
-    lab.innerHTML = `<input type="radio" name="base" value="${l.id}"> <span class="name">${l.name}</span>`;
-    const r = lab.querySelector('input'); r.checked = state.base === l.id;
-    r.onchange = () => { setBase(l.id); };
-    bl.appendChild(lab);
+  const bs = $('#baseSeg'); bs.innerHTML = '';
+  LAYERS.filter(l => l.base).forEach(l => bs.appendChild(chip(BASE_SHORT[l.id] || l.name, state.base === l.id, () => { setBase(l.id); buildLayerUI(); })));
+
+  const ts = $('#terrSeg'); ts.innerHTML = ''; const to = $('#terrOps'); to.innerHTML = '';
+  TERRAIN_IDS.forEach(id => {
+    const on = !!state.overlays[id]?.on;
+    ts.appendChild(chip(TERRAIN_SHORT[id], on, () => { setOverlay(id, !on, opOf(id)); buildLayerUI(); }));
+    if (on) to.appendChild(slider(id, TERRAIN_SHORT[id]));
   });
-  const ol = $('#overList'); ol.innerHTML = '';
-  let group = '';
-  LAYERS.filter(l => !l.base && !l.dataOnly).forEach(l => {
-    if (l.group !== group) { group = l.group; const h = document.createElement('div'); h.className = 'note'; h.style.marginTop = '8px'; h.textContent = group; ol.appendChild(h); }
-    const o = state.overlays[l.id] || { on: false, op: l.op };
-    const lab = document.createElement('div'); lab.className = 'row';
-    lab.innerHTML = `<label class="name"><input type="checkbox"> ${l.name}${l.note ? ` <small>${l.note}</small>` : ''}</label>
-      <input type="range" min="0" max="1" step="0.05" aria-label="不透明度">`;
-    const [cb, rg] = lab.querySelectorAll('input');
-    cb.checked = o.on; rg.value = o.op;
-    cb.onchange = () => { setOverlay(l.id, cb.checked, +rg.value); };
-    rg.oninput = () => { setOverlay(l.id, cb.checked, +rg.value); };
-    ol.appendChild(lab);
-    if (l.id === 'veg2024') {
-      const lg = document.createElement('div'); lg.className = 'legend';
-      lg.innerHTML = VEG_LEGEND.map(([n, c]) => `<span><i style="background:${c}"></i>${n}</span>`).join('');
-      ol.appendChild(lg);
+
+  const th = $('#themeSeg'); th.innerHTML = ''; const sub = $('#themeSub'); sub.innerHTML = '';
+  const cur = curTheme(), curT = themeOf(cur);
+  th.appendChild(chip('なし', !cur, () => { setTheme(''); }));
+  THEMES.forEach(t => th.appendChild(chip(t.name, curT === t, () => {
+    if (curT === t) return setTheme('');
+    setTheme(t.ids.includes(lastPick[t.key]) ? lastPick[t.key] : t.ids[t.key === 'photo' ? 2 : 0]);
+  })));
+  if (cur) {
+    const l = LAYER_BY_ID[cur];
+    if (curT.ids.length > 1) {
+      const s = document.createElement('select'); s.className = 'full';
+      s.innerHTML = curT.ids.map(id => `<option value="${id}">${LAYER_BY_ID[id].name}${LAYER_BY_ID[id].note ? '（' + LAYER_BY_ID[id].note + '）' : ''}</option>`).join('');
+      s.value = cur; s.onchange = () => setTheme(s.value);
+      sub.appendChild(s);
+    } else {
+      const n = document.createElement('div'); n.className = 'note'; n.textContent = l.name + (l.note ? '（' + l.note + '）' : ''); sub.appendChild(n);
     }
-  });
+    sub.appendChild(slider(cur, '濃さ'));
+    if (cur === 'veg2024') {
+      const lg = document.createElement('details'); lg.innerHTML = '<summary>凡例</summary><div class="legend">' + VEG_LEGEND.map(([n, c]) => `<span><i style="background:${c}"></i>${n}</span>`).join('') + '</div>';
+      sub.appendChild(lg);
+    }
+    if (map.getZoom() < l.min - 2) { const w = document.createElement('div'); w.className = 'note'; w.textContent = `ズーム${l.min - 2}以上で表示されます`; sub.appendChild(w); }
+  }
+}
+function setTheme(id) {
+  THEME_IDS.forEach(x => { if (x !== id && state.overlays[x]?.on) setOverlay(x, false, opOf(x)); });
+  if (id) { setOverlay(id, true, opOf(id)); lastPick[themeOf(id).key] = id; store.set('fm-theme-pick', lastPick); }
+  buildLayerUI();
 }
 function setBase(id) {
   LAYERS.filter(l => l.base).forEach(l => map.removeLayer(tileLayers[l.id]));
@@ -146,24 +192,39 @@ function setOverlay(id, on, op) {
   const t = tileLayers[id]; if (!t) return;
   t.setOpacity(op);
   if (on) { if (!map.hasLayer(t)) t.addTo(map); } else map.removeLayer(t);
-  // 背景より上、ベクタより下の順序を保つ
-  LAYERS.filter(l => !l.base && !l.dataOnly).forEach(l => { if (map.hasLayer(tileLayers[l.id])) tileLayers[l.id].bringToFront(); });
   state.overlays[id] = { on, op }; saveState();
 }
-buildLayerUI();
 setBase(state.base);
-LAYERS.filter(l => !l.base && !l.dataOnly).forEach(l => { const o = state.overlays[l.id]; if (o?.on && tileLayers[l.id]) setOverlay(l.id, true, o.op); });
+[...TERRAIN_IDS, ...THEME_IDS].forEach(id => { const o = state.overlays[id]; if (o?.on && tileLayers[id]) setOverlay(id, true, o.op); });
+buildLayerUI();
+map.on('zoomend', () => { if (curTheme()) buildLayerUI(); });
 
-/* ---------------- パネル ---------------- */
+// ベクタのチップ: チェック状態に合わせて見た目と補足（凡例など）を切り替える
+function syncChips() {
+  document.querySelectorAll('label.chip input').forEach(i => i.parentElement.classList.toggle('on', i.checked));
+  document.querySelectorAll('#vecSub .sub').forEach(s => { s.hidden = !$('#' + s.dataset.for).checked; });
+}
+document.addEventListener('change', e => { if (e.target.closest?.('label.chip')) syncChips(); });
+
+/* ---------------- パネル（下のツールバーから開く） ---------------- */
 const panel = $('#panel');
-$('#btnPanel').onclick = () => { panel.classList.toggle('open'); panel.setAttribute('aria-hidden', !panel.classList.contains('open')); };
-$('#btnClose').onclick = () => { panel.classList.remove('open'); panel.setAttribute('aria-hidden', 'true'); };
-document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => {
-  document.querySelectorAll('.tabs button').forEach(x => x.classList.toggle('on', x === b));
-  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('on', t.id === 'tab-' + b.dataset.tab));
-  if (b.dataset.tab === 'dl') { refreshAreas(); updateEstimate(); }
-  if (b.dataset.tab === 'data') { refreshExportSelect(); updateMeshLinks(); }
-});
+const VIEW_TITLE = { layers: '地図', dl: '範囲を保存', more: 'その他' };
+let curView = '';
+function openView(v) {
+  if (!v || curView === v) { curView = ''; panel.classList.remove('open'); panel.setAttribute('aria-hidden', 'true'); }
+  else {
+    curView = v; panel.classList.add('open'); panel.setAttribute('aria-hidden', 'false');
+    $('#panelTitle').textContent = VIEW_TITLE[v];
+    document.querySelectorAll('.view').forEach(s => s.classList.toggle('on', s.id === 'view-' + v));
+    if (v === 'layers') { buildLayerUI(); syncChips(); }
+    if (v === 'dl') onOpenDl();
+    if (v === 'more') { refreshExportSelect(); updateMeshLinks(); }
+  }
+  document.querySelectorAll('#toolbar [data-view]').forEach(b => b.classList.toggle('on', b.dataset.view === curView));
+  if (v !== 'dl' && !dlBusy) clearSelection();
+}
+document.querySelectorAll('#toolbar [data-view]').forEach(b => b.onclick = () => openView(b.dataset.view));
+$('#btnClose').onclick = () => openView('');
 
 /* ---------------- 現在地 ---------------- */
 let locMarker, locCircle, locating = false, firstFix = false;
@@ -273,21 +334,32 @@ function setSelection(bbox) {
   updateEstimate(); updateMeshLinks();
 }
 function clearSelection() { selRect?.remove(); selHandles.forEach(h => h.remove()); selRect = null; selHandles = []; }
-$('#btnSelect').onclick = () => {
-  const b = map.getBounds().pad(-0.2);
-  setSelection([b.getWest(), b.getSouth(), b.getEast(), b.getNorth()]);
-  if (innerWidth < 700) { panel.classList.remove('open'); }
-};
+// パネルに隠れていない地図の部分に合わせて範囲を置く
+function fitSelectionToView() {
+  const sz = map.getSize(), pr = panel.getBoundingClientRect(), mobile = innerWidth < 700;
+  const x0 = 24, y0 = 70, x1 = (mobile ? sz.x : pr.left) - 24, y1 = (mobile ? pr.top : sz.y - 70) - 24;
+  const nw = map.containerPointToLatLng([x0, y0]), se = map.containerPointToLatLng([x1, Math.max(y1, y0 + 60)]);
+  setSelection([nw.lng, se.lat, se.lng, nw.lat]);
+}
+$('#btnSelect').onclick = fitSelectionToView;
+let dlBusy = false;
+function onOpenDl() {
+  // 表示中の地図 ＋ 標高データ を保存対象にする
+  if (!dlBusy) {
+    const vis = new Set([state.base, ...Object.entries(state.overlays).filter(([, v]) => v.on).map(([k]) => k), 'dem_png']);
+    document.querySelectorAll('#dlLayers input').forEach(i => { i.checked = vis.has(i.value); });
+  }
+  setTimeout(() => { if (!selRect) fitSelectionToView(); updateEstimate(); }, 300); // パネルが開ききってから
+  refreshAreas();
+}
 
 // 保存対象レイヤの選択UI
 function buildDlLayers() {
   const d = $('#dlLayers'); d.innerHTML = '';
-  const saved = store.get('fm-dl-layers2', ['pale', 'seamlessphoto', 'hillshademap', 'ort_old10', 'ort_USA10', 'veg2024', 'lcm25k_2012', 'dem_png']);
   LAYERS.forEach(l => {
     const lab = document.createElement('label'); lab.className = 'row';
     lab.innerHTML = `<input type="checkbox" value="${l.id}"> ${l.name} <small>z${l.min}–${l.max}</small>`;
-    const cb = lab.querySelector('input'); cb.checked = saved.includes(l.id);
-    cb.onchange = () => { store.set('fm-dl-layers2', dlLayerIds()); updateEstimate(); };
+    lab.querySelector('input').onchange = updateEstimate;
     d.appendChild(lab);
   });
 }
@@ -340,7 +412,7 @@ $('#btnDownload').onclick = async () => {
   if (est.total > 5000 && !confirm(`${est.total.toLocaleString()}枚（約${est.mb.toFixed(0)}MB）を保存します。Wi-Fi環境を推奨します。続けますか？`)) return;
 
   try { await navigator.storage?.persist?.(); } catch { }
-  cancelFlag = false;
+  cancelFlag = false; dlBusy = true;
   $('#btnDownload').disabled = true; $('#btnCancel').hidden = false;
   const prog = $('#dlProg'); prog.hidden = false; prog.value = 0;
   const msg = $('#dlMsg');
@@ -388,7 +460,7 @@ $('#btnDownload').onclick = async () => {
     store.set('fm-areas', areas);
     msg.textContent = `保存しました：${name}（タイル ${total.toLocaleString()} 枚、失敗 ${stat.err}${fudeN ? `、筆ポリゴン ${fudeN.toLocaleString()} 筆` : ''}）` + (stat.err ? ' — 失敗分はもう一度保存すると再取得します。' : '');
   } else msg.textContent = '中止しました（取得済みのタイルは残っています）。';
-  $('#btnDownload').disabled = false; $('#btnCancel').hidden = true; prog.hidden = true;
+  $('#btnDownload').disabled = false; $('#btnCancel').hidden = true; prog.hidden = true; dlBusy = false;
   refreshAreas();
 };
 
@@ -400,7 +472,7 @@ async function refreshAreas() {
     d.innerHTML = `<b></b><span class="note">${new Date(a.date).toLocaleDateString('ja-JP')}・z${a.zMin}–${a.zMax}・${a.tiles.toLocaleString()}枚${a.fude ? `・筆${(a.fudeN || 0).toLocaleString()}` : ''}・${a.layers.map(id => LAYER_BY_ID[id]?.name).filter(Boolean).join('、')}</span><br>
       <button class="btn" data-a="go">表示</button><button class="btn" data-a="again">再取得</button><button class="btn" data-a="del">削除</button>`;
     d.querySelector('b').textContent = a.name;
-    d.querySelector('[data-a=go]').onclick = () => { const [w, s, e, n] = a.bbox; map.fitBounds([[s, w], [n, e]]); setSelection(a.bbox); if (innerWidth < 700) panel.classList.remove('open'); };
+    d.querySelector('[data-a=go]').onclick = () => { const [w, s, e, n] = a.bbox; map.fitBounds([[s, w], [n, e]], innerWidth < 700 ? { paddingBottomRight: [0, panel.offsetHeight] } : { paddingBottomRight: [panel.offsetWidth, 0] }); setSelection(a.bbox); };
     d.querySelector('[data-a=again]').onclick = () => {
       setSelection(a.bbox); $('#zMin').value = a.zMin; $('#zMax').value = a.zMax; $('#areaName').value = a.name;
       document.querySelectorAll('#dlLayers input').forEach(i => i.checked = a.layers.includes(i.value));
@@ -767,11 +839,11 @@ async function delineate(latlng) {
   }
 }
 function setCatchMode(on) {
-  catchMode = on; $('#btnCatch').classList.toggle('primary', on);
-  $('#btnCatch').textContent = on ? '地点をタップしてください（もう一度押すと中止）' : '集水域を求める（地点をタップ）';
+  catchMode = on; $('#btnCatch').classList.toggle('on', on); $('#catchBar').hidden = !on;
   map.getContainer().style.cursor = on ? 'crosshair' : '';
 }
-$('#btnCatch').onclick = () => { setCatchMode(!catchMode); if (catchMode) { toast('流域を求めたい地点（川の上）をタップ'); if (innerWidth < 700) panel.classList.remove('open'); } };
+$('#btnCatch').onclick = () => { setCatchMode(!catchMode); if (catchMode && innerWidth < 700) openView(''); };
+$('#catchCancel').onclick = () => setCatchMode(false);
 map.on('click', async e => {
   if (!catchMode) return; setCatchMode(false);
   try { await delineate(e.latlng); } catch (err) { console.warn(err); toast('計算に失敗しました'); }
@@ -1052,3 +1124,4 @@ refreshFude();
 updateEstimate(); updateMeshLinks();
 
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(e => console.warn('SW登録失敗', e));
+syncChips();
