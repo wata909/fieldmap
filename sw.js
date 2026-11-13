@@ -1,5 +1,5 @@
 /* Service Worker: アプリ本体と保存済みタイルをオフラインで返す */
-const SHELL = 'fm-shell-v2';
+const SHELL = 'fm-shell-v3';
 const TILE_CACHE = 'fm-tiles-v1';
 const DATA_CACHE = 'fm-data-v1';
 const SHELL_FILES = [
@@ -7,7 +7,7 @@ const SHELL_FILES = [
   'lib/leaflet.min.js', 'lib/leaflet.min.css', 'lib/topojson-client.min.js', 'lib/fflate.min.js', 'lib/flatgeobuf-geojson.min.js',
   'lib/images/layers.png', 'lib/images/layers-2x.png', 'lib/images/marker-icon.png', 'lib/images/marker-icon-2x.png', 'lib/images/marker-shadow.png',
 ];
-const TILE_HOSTS = ['cyberjapandata.gsi.go.jp', 'map.ecoris.info', 'gbank.gsj.jp'];
+const TILE_HOSTS = ['cyberjapandata.gsi.go.jp', 'www.biodic.go.jp', 'gbank.gsj.jp'];
 const DATA_HOSTS = ['geoshape.ex.nii.ac.jp'];
 
 self.addEventListener('install', e => {

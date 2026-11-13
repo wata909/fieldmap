@@ -4,7 +4,7 @@
 const GSI = 'https://cyberjapandata.gsi.go.jp/xyz/';
 const GSI_ATTR = '<a href="https://maps.gsi.go.jp/development/ichiran.html" target="_blank">地理院タイル</a>';
 const GSJ_ATTR = '<a href="https://gbank.gsj.jp/seamless/" target="_blank">産総研地質調査総合センター 20万分の1日本シームレス地質図V2</a>';
-const ECORIS_ATTR ='<a href="https://map.ecoris.info/" target="_blank">エコリス地図タイル</a>（環境省 自然環境保全基礎調査 植生調査）';
+const VEG_ATTR = '<a href="https://www.geospatial.jp/ckan/dataset/biodic_veg2024tile" target="_blank">現存植生図2024（環境省生物多様性センター）</a>';
 
 // id, 名前, URL, ネイティブズーム範囲, 種類
 const LAYERS = [
@@ -23,9 +23,10 @@ const LAYERS = [
   { id: 'gazo2', name: '空中写真 1979〜1983年', url: GSI + 'gazo2/{z}/{x}/{y}.jpg', min: 10, max: 17, op: 1, group: '過去の空中写真' },
   { id: 'gazo3', name: '空中写真 1984〜1986年', url: GSI + 'gazo3/{z}/{x}/{y}.jpg', min: 10, max: 17, op: 1, group: '過去の空中写真' },
   { id: 'gazo4', name: '空中写真 1988〜1990年', url: GSI + 'gazo4/{z}/{x}/{y}.jpg', min: 10, max: 17, op: 1, group: '過去の空中写真' },
-  { id: 'vege67', name: '植生図（第6〜7回 1/2.5万）', url: 'https://map.ecoris.info/tiles/vege67/{z}/{x}/{y}.png', min: 2, max: 15, op: 0.7, group: '植生', ecoris: true },
-  { id: 'vege', name: '植生図（第2〜5回 1/5万）', url: 'https://map.ecoris.info/tiles/vege/{z}/{x}/{y}.png', min: 2, max: 15, op: 0.7, group: '植生', ecoris: true },
+  // 配信元がCORSを許可していないため opaque（画像表示・端末保存は可、ZIP書き出しは不可）
+  { id: 'veg2024', name: '現存植生図2024（1/2.5万）', url: 'https://www.biodic.go.jp/kiso/vg/tile/veg2024raster/{z}/{x}/{y}.png', min: 5, max: 15, op: 0.6, group: '植生', opaque: true, attr: VEG_ATTR },
 ];
+const VEG_LEGEND = [['高山帯自然植生域', '#fff4b3'], ['コケモモ－トウヒクラス域自然植生', '#8b7c24'], ['コケモモ－トウヒクラス域代償植生', '#888b24'], ['ブナクラス域自然植生', '#178017'], ['ブナクラス域代償植生', '#5b8e0f'], ['ヤブツバキクラス域自然植生', '#206020'], ['ヤブツバキクラス域代償植生', '#229456'], ['河辺・湿原・塩沼地・砂丘植生', '#e7cb6a'], ['植林地', '#697720'], ['スギ・ヒノキ・サワラ植林', '#2e5961'], ['竹林', '#bfd968'], ['牧草地・ゴルフ場・芝地', '#e7f066'], ['耕作地', '#988e58'], ['水田雑草群落', '#b3f6ff'], ['市街地等', '#B0B0B0'], ['開放水域', '#bed2ff']];
 const LAYER_BY_ID = Object.fromEntries(LAYERS.map(l => [l.id, l]));
 
 const BOUND_YEARS = ['19200101', '19301231', '19401231', '19501001', '19551001', '19601001', '19651001', '19701001', '19801001', '20001001', '20200101', '20230101'];
@@ -37,7 +38,7 @@ const LOCAL_CACHE = 'fm-local-v1';
 const LOCAL_PREFIX = new URL('local/', location.href).href;
 
 const MAX_TILES = 30000;       // 1回の保存の上限
-const MAX_ECORIS_TILES = 3000; // エコリスへの過度なアクセスを避ける
+const MAX_OPAQUE_TILES = 1500; // CORS非対応タイルはブラウザの容量計算で大きく数えられるため上限を低めに
 const $ = s => document.querySelector(s);
 
 /* ---------------- 状態の保存 ---------------- */
@@ -61,7 +62,7 @@ const tileLayers = {};
 function makeTile(l) {
   return L.tileLayer(l.url, {
     minNativeZoom: l.min, maxNativeZoom: l.max, minZoom: l.base ? 0 : Math.max(l.min - 2, 0), maxZoom: 19,
-    opacity: l.op ?? 1, attribution: l.attr || (l.ecoris ? ECORIS_ATTR : GSI_ATTR), crossOrigin: true,
+    opacity: l.op ?? 1, attribution: l.attr || GSI_ATTR, crossOrigin: !l.opaque,
   });
 }
 LAYERS.forEach(l => { tileLayers[l.id] = makeTile(l); });
@@ -93,6 +94,11 @@ function buildLayerUI() {
     cb.onchange = () => { setOverlay(l.id, cb.checked, +rg.value); };
     rg.oninput = () => { setOverlay(l.id, cb.checked, +rg.value); };
     ol.appendChild(lab);
+    if (l.id === 'veg2024') {
+      const lg = document.createElement('div'); lg.className = 'legend';
+      lg.innerHTML = VEG_LEGEND.map(([n, c]) => `<span><i style="background:${c}"></i>${n}</span>`).join('');
+      ol.appendChild(lg);
+    }
   });
 }
 function setBase(id) {
@@ -226,12 +232,12 @@ $('#btnSelect').onclick = () => {
 // 保存対象レイヤの選択UI
 function buildDlLayers() {
   const d = $('#dlLayers'); d.innerHTML = '';
-  const saved = store.get('fm-dl-layers', ['pale', 'seamlessphoto', 'hillshademap', 'ort_old10', 'ort_USA10', 'vege67', 'lcm25k_2012']);
+  const saved = store.get('fm-dl-layers2', ['pale', 'seamlessphoto', 'hillshademap', 'ort_old10', 'ort_USA10', 'veg2024', 'lcm25k_2012']);
   LAYERS.forEach(l => {
     const lab = document.createElement('label'); lab.className = 'row';
     lab.innerHTML = `<input type="checkbox" value="${l.id}"> ${l.name} <small>z${l.min}–${l.max}</small>`;
     const cb = lab.querySelector('input'); cb.checked = saved.includes(l.id);
-    cb.onchange = () => { store.set('fm-dl-layers', dlLayerIds()); updateEstimate(); };
+    cb.onchange = () => { store.set('fm-dl-layers2', dlLayerIds()); updateEstimate(); };
     d.appendChild(lab);
   });
 }
@@ -240,9 +246,9 @@ buildDlLayers();
 ['#zMin', '#zMax'].forEach(s => $(s).oninput = updateEstimate);
 
 function estimate(bbox, ids, zMin, zMax) {
-  let total = 0, ecoris = 0; const per = {};
-  ids.forEach(id => { const l = LAYER_BY_ID[id]; const n = countTiles(l, bbox, zMin, zMax); per[id] = n; total += n; if (l.ecoris) ecoris += n; });
-  return { total, ecoris, per, mb: total * 0.025 }; // 1枚 ≒ 25KB として概算
+  let total = 0, opaque = 0; const per = {};
+  ids.forEach(id => { const l = LAYER_BY_ID[id]; const n = countTiles(l, bbox, zMin, zMax); per[id] = n; total += n; if (l.opaque) opaque += n; });
+  return { total, opaque, per, mb: total * 0.025 }; // 1枚 ≒ 25KB として概算
 }
 function updateEstimate() {
   const bbox = selBBox(); const el = $('#dlEstimate');
@@ -252,7 +258,7 @@ function updateEstimate() {
   const km = (() => { const [w, s, ee, n] = bbox; const dy = (n - s) * 111; const dx = (ee - w) * 111 * Math.cos((n + s) / 2 * Math.PI / 180); return (dx * dy).toFixed(1); })();
   let warn = '';
   if (e.total > MAX_TILES) warn += `<br>⚠ ${MAX_TILES.toLocaleString()}枚を超えています。範囲かズームを小さくしてください。`;
-  if (e.ecoris > MAX_ECORIS_TILES) warn += `<br>⚠ 植生図タイルは${MAX_ECORIS_TILES.toLocaleString()}枚までです（提供元への負荷配慮）。`;
+  if (e.opaque > MAX_OPAQUE_TILES) warn += `<br>⚠ 植生図タイルは1回${MAX_OPAQUE_TILES.toLocaleString()}枚までです（ズーム最大を下げてください）。`;
   el.innerHTML = `範囲 約${km} km² ／ タイル ${e.total.toLocaleString()} 枚 ／ 約 ${e.mb.toFixed(0)} MB（概算）${warn}`;
 }
 
@@ -263,10 +269,11 @@ async function pool(items, conc, fn) {
   let i = 0; const run = async () => { while (i < items.length && !cancelFlag) { const it = items[i++]; await fn(it); } };
   await Promise.all(Array.from({ length: conc }, run));
 }
-async function fetchToCache(cache, url) {
+async function fetchToCache(cache, url, opaque = false) {
   if (await cache.match(url)) return 'hit';
   try {
-    const r = await fetch(url, { mode: 'cors' });
+    const r = await fetch(url, { mode: opaque ? 'no-cors' : 'cors' });
+    if (opaque && r.type === 'opaque') { await cache.put(url, r); return 'ok'; }
     if (r.ok) { await cache.put(url, r); return 'ok'; }
     return r.status === 404 ? 'none' : 'err';
   } catch { return 'err'; }
@@ -279,7 +286,7 @@ $('#btnDownload').onclick = async () => {
   const ids = dlLayerIds(), zMin = +$('#zMin').value, zMax = +$('#zMax').value;
   if (zMin > zMax) { alert('ズームの最小が最大を超えています。'); return; }
   const est = estimate(bbox, ids, zMin, zMax);
-  if (est.total > MAX_TILES || est.ecoris > MAX_ECORIS_TILES) { alert('枚数が上限を超えています。範囲かズームを小さくしてください。'); return; }
+  if (est.total > MAX_TILES || est.opaque > MAX_OPAQUE_TILES) { alert('枚数が上限を超えています。範囲かズームを小さくしてください。'); return; }
   if (est.total > 5000 && !confirm(`${est.total.toLocaleString()}枚（約${est.mb.toFixed(0)}MB）を保存します。Wi-Fi環境を推奨します。続けますか？`)) return;
 
   try { await navigator.storage?.persist?.(); } catch { }
@@ -292,12 +299,12 @@ $('#btnDownload').onclick = async () => {
   const total = est.total; let done = 0;
   const tick = r => { stat[r]++; done++; if (done % 20 === 0 || done === total) { prog.value = done / total; msg.textContent = `タイル ${done.toLocaleString()} / ${total.toLocaleString()}（新規 ${stat.ok}・保存済 ${stat.hit}・データなし ${stat.none}・失敗 ${stat.err}）`; } };
 
-  // 地理院は並列6、エコリスは並列2
+  // 通常は並列6、CORS非対応（植生図）は並列2
   const gsiItems = [], ecoItems = [];
-  ids.forEach(id => { const l = LAYER_BY_ID[id]; for (const t of tileUrls(l, bbox, zMin, zMax)) (l.ecoris ? ecoItems : gsiItems).push(t.url); });
+  ids.forEach(id => { const l = LAYER_BY_ID[id]; for (const t of tileUrls(l, bbox, zMin, zMax)) (l.opaque ? ecoItems : gsiItems).push(t.url); });
   await Promise.all([
     pool(gsiItems, 6, async u => tick(await fetchToCache(cache, u))),
-    pool(ecoItems, 2, async u => tick(await fetchToCache(cache, u))),
+    pool(ecoItems, 2, async u => tick(await fetchToCache(cache, u, true))),
   ]);
 
   // 旧市町村界
@@ -339,7 +346,7 @@ async function refreshAreas() {
   list.innerHTML = areas.length ? '' : '<p class="note">まだありません。</p>';
   areas.forEach(a => {
     const d = document.createElement('div'); d.className = 'area';
-    d.innerHTML = `<b></b><span class="note">${new Date(a.date).toLocaleDateString('ja-JP')}・z${a.zMin}–${a.zMax}・${a.tiles.toLocaleString()}枚${a.fude ? `・筆${(a.fudeN || 0).toLocaleString()}` : ''}・${a.layers.map(id => LAYER_BY_ID[id]?.name).join('、')}</span><br>
+    d.innerHTML = `<b></b><span class="note">${new Date(a.date).toLocaleDateString('ja-JP')}・z${a.zMin}–${a.zMax}・${a.tiles.toLocaleString()}枚${a.fude ? `・筆${(a.fudeN || 0).toLocaleString()}` : ''}・${a.layers.map(id => LAYER_BY_ID[id]?.name).filter(Boolean).join('、')}</span><br>
       <button class="btn" data-a="go">表示</button><button class="btn" data-a="again">再取得</button><button class="btn" data-a="del">削除</button>`;
     d.querySelector('b').textContent = a.name;
     d.querySelector('[data-a=go]').onclick = () => { const [w, s, e, n] = a.bbox; map.fitBounds([[s, w], [n, e]]); setSelection(a.bbox); if (innerWidth < 700) panel.classList.remove('open'); };
@@ -706,7 +713,7 @@ $('#btnExport').onclick = async () => {
   const a = store.get('fm-areas', []).find(x => x.id === $('#selExportArea').value);
   if (!a) return;
   const msg = $('#expMsg'); msg.textContent = '準備中…';
-  const exportable = a.layers.filter(id => !LAYER_BY_ID[id]?.ecoris);
+  const exportable = a.layers.filter(id => LAYER_BY_ID[id] && !LAYER_BY_ID[id].opaque);
   const n = exportable.reduce((s, id) => s + countTiles(LAYER_BY_ID[id], a.bbox, a.zMin, a.zMax), 0);
   if (n > 8000 && !confirm(`タイル${n.toLocaleString()}枚をZIPにします。スマホではメモリ不足になる場合があります。続けますか？`)) { msg.textContent = ''; return; }
   const files = {}; const enc = new TextEncoder();
@@ -754,7 +761,7 @@ $('#btnExport').onclick = async () => {
     '  旧市町村界: 歴史的行政区域データセットβ版（CODH）／国土数値情報（行政区域データ）をもとにNIIが加工',
     '  人口: 総務省統計局 国勢調査 地域メッシュ統計（e-Stat）',
     '  筆ポリゴン: 農林水産省「筆ポリゴンデータ（2022年度公開）」（農研機構 FlatGeobuf版より取得, land_type 100=田 200=畑）',
-    a.layers.some(id => LAYER_BY_ID[id]?.ecoris) ? '  ※エコリス植生図タイルは利用条件により含めていません。' : '',
+    a.layers.some(id => LAYER_BY_ID[id]?.opaque) ? '  ※現存植生図2024タイルは配信元がCORS非対応のためアプリから読み出せず、含めていません（G空間情報センターでGPKG/タイルを入手できます）。' : '',
   ].join('\n'));
   msg.textContent = 'ZIP作成中…';
   await new Promise(r => setTimeout(r, 30));
