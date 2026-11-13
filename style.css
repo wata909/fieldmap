@@ -1,0 +1,77 @@
+:root{
+  --bg:#ffffff; --fg:#1d2321; --muted:#5d6864; --line:#d9dfdc;
+  --accent:#1f5f4a; --accent-fg:#fff; --chip:#eef3f1; --shadow:0 2px 10px rgba(0,0,0,.25);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#1b201e; --fg:#e6ece9; --muted:#9aa6a1; --line:#33403b;
+    --accent:#4fae8c; --accent-fg:#0b1512; --chip:#25302c;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#1b201e; --fg:#e6ece9; --muted:#9aa6a1; --line:#33403b;
+  --accent:#4fae8c; --accent-fg:#0b1512; --chip:#25302c;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);
+  font:15px/1.5 -apple-system,BlinkMacSystemFont,"Hiragino Sans","Noto Sans JP",sans-serif}
+#map{position:fixed;inset:0}
+#fabs{position:fixed;right:calc(12px + env(safe-area-inset-right));top:calc(12px + env(safe-area-inset-top));
+  display:flex;flex-direction:column;gap:10px;z-index:1000}
+.fab{width:48px;height:48px;border-radius:50%;border:0;background:var(--bg);color:var(--fg);
+  font-size:22px;box-shadow:var(--shadow);cursor:pointer}
+.fab.on{background:var(--accent);color:var(--accent-fg)}
+#netState{position:fixed;left:50%;transform:translateX(-50%);top:calc(10px + env(safe-area-inset-top));
+  background:#b33;color:#fff;padding:2px 12px;border-radius:12px;font-size:13px;z-index:1000}
+.leaflet-top.leaflet-left{top:env(safe-area-inset-top);left:env(safe-area-inset-left)}
+
+#panel{position:fixed;z-index:1100;background:var(--bg);color:var(--fg);box-shadow:var(--shadow);
+  display:flex;flex-direction:column;transition:transform .25s ease}
+@media (min-width:700px){
+  #panel{top:0;bottom:0;right:0;width:380px;transform:translateX(105%)}
+  #panel.open{transform:none}
+}
+@media (max-width:699px){
+  #panel{left:0;right:0;bottom:0;height:62vh;border-radius:14px 14px 0 0;transform:translateY(105%);
+    padding-bottom:env(safe-area-inset-bottom)}
+  #panel.open{transform:none}
+}
+#panel header{display:flex;align-items:center;border-bottom:1px solid var(--line);padding:6px 8px 0 8px}
+.tabs{display:flex;gap:4px;flex:1}
+.tabs button{border:0;background:none;color:var(--muted);padding:10px 12px;font-size:15px;
+  border-bottom:3px solid transparent;cursor:pointer}
+.tabs button.on{color:var(--fg);border-bottom-color:var(--accent);font-weight:600}
+.x{border:0;background:none;color:var(--fg);font-size:26px;width:44px;height:44px;cursor:pointer}
+.tab{display:none;overflow:auto;padding:4px 16px 24px;flex:1;-webkit-overflow-scrolling:touch}
+.tab.on{display:block}
+h3{font-size:13px;color:var(--muted);margin:16px 0 6px;letter-spacing:.04em}
+.row{display:flex;align-items:center;gap:8px;padding:6px 0;flex-wrap:wrap}
+.row input[type=range]{flex:1;min-width:80px;max-width:140px}
+.row .name{flex:1;min-width:150px}
+.row small{color:var(--muted)}
+select,input[type=text],input[type=number]{font:inherit;color:var(--fg);background:var(--chip);
+  border:1px solid var(--line);border-radius:8px;padding:6px 8px}
+input[type=number]{width:64px}
+input[type=text]{width:100%;max-width:260px}
+.btn{display:inline-block;font:inherit;border:1px solid var(--line);background:var(--chip);color:var(--fg);
+  border-radius:10px;padding:9px 14px;cursor:pointer;margin:4px 0}
+.btn.primary{background:var(--accent);color:var(--accent-fg);border-color:var(--accent)}
+.btn:disabled{opacity:.5}
+.btnrow{display:flex;gap:8px;flex-wrap:wrap}
+.note{color:var(--muted);font-size:13px}
+.steps{padding-left:20px;margin:8px 0}
+.steps li{margin:8px 0}
+.steps label{margin-right:10px}
+.est{background:var(--chip);border-radius:8px;padding:8px 10px;font-size:13px;margin:8px 0}
+progress{width:100%;height:10px}
+.area{border:1px solid var(--line);border-radius:10px;padding:8px 10px;margin:6px 0}
+.area b{display:block}
+.area .btn{padding:5px 10px;font-size:13px;margin-right:4px}
+.legend{display:flex;flex-wrap:wrap;gap:2px 8px;font-size:12px;color:var(--muted)}
+.legend i{display:inline-block;width:12px;height:12px;margin-right:3px;vertical-align:-2px;border:1px solid #0002}
+.credits{padding-left:18px}
+.meshlink{display:inline-block;margin:2px 6px 2px 0;font-size:13px;color:var(--accent)}
+.leaflet-popup-content{font-size:13px}
+.leaflet-popup-content table{border-collapse:collapse}
+.leaflet-popup-content td{padding:1px 6px 1px 0;vertical-align:top}
+.sel-handle{background:#fff;border:3px solid #d33;border-radius:50%}

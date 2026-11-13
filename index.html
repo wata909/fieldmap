@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>フィールド地図</title>
+<meta name="theme-color" content="#1f5f4a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="stylesheet" href="lib/leaflet.min.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="map"></div>
+
+<div id="fabs">
+  <button id="btnPanel" class="fab" aria-label="メニュー">☰</button>
+  <button id="btnLocate" class="fab" aria-label="現在地">◎</button>
+</div>
+<div id="netState" hidden>オフライン</div>
+
+<aside id="panel" aria-hidden="true">
+  <header>
+    <nav class="tabs">
+      <button data-tab="layers" class="on">レイヤ</button>
+      <button data-tab="dl">範囲保存</button>
+      <button data-tab="data">データ</button>
+    </nav>
+    <button id="btnClose" class="x" aria-label="閉じる">×</button>
+  </header>
+
+  <section id="tab-layers" class="tab on">
+    <h3>背景地図</h3>
+    <div id="baseList"></div>
+    <h3>重ねる地図</h3>
+    <div id="overList"></div>
+    <h3>ベクタ</h3>
+    <label class="row"><input type="checkbox" id="chkBound"> 旧市町村界
+      <select id="selBoundYear"></select></label>
+    <label class="row"><input type="checkbox" id="chkFude"> 農地の筆ポリゴン（2022年度）</label>
+    <div class="legend"><span><i style="background:#64b5f6"></i>田</span><span><i style="background:#ffd54f"></i>畑</span><span id="fudeInfo"></span></div>
+    <label class="row"><input type="checkbox" id="chkPop"> 人口メッシュ（読込済データ）</label>
+    <div id="popLegend" class="legend"></div>
+    <label class="row"><input type="checkbox" id="chkUser"> 読込んだGeoJSON（遺跡など）</label>
+    <h3>遺跡</h3>
+    <p class="note">文化財総覧WebGISはAPIが公開されていないため、現在の表示位置で開くリンクにしています。都道府県が公開している遺跡GeoJSONは「データ」タブから読込めます。</p>
+    <button id="btnHeritage" class="btn">文化財総覧WebGISでこの場所を開く ↗</button>
+  </section>
+
+  <section id="tab-dl" class="tab">
+    <ol class="steps">
+      <li><button id="btnSelect" class="btn">範囲を指定</button>
+        <span class="note">地図上の四角の角をドラッグして調整</span></li>
+      <li>保存するレイヤ<div id="dlLayers"></div></li>
+      <li>ズーム
+        <label>最小 <input type="number" id="zMin" min="2" max="18" value="12"></label>
+        <label>最大 <input type="number" id="zMax" min="2" max="18" value="16"></label></li>
+      <li><label><input type="checkbox" id="dlBound" checked> 旧市町村界（全年次）</label><br><label><input type="checkbox" id="dlFude" checked> 農地の筆ポリゴン</label></li>
+      <li>名前 <input type="text" id="areaName" placeholder="例: 調査地A"></li>
+    </ol>
+    <div id="dlEstimate" class="est"></div>
+    <div class="btnrow">
+      <button id="btnDownload" class="btn primary">端末に保存（オフライン用）</button>
+      <button id="btnCancel" class="btn" hidden>中止</button>
+    </div>
+    <progress id="dlProg" value="0" max="1" hidden></progress>
+    <div id="dlMsg" class="note"></div>
+
+    <h3>保存済みの範囲</h3>
+    <div id="areaList"></div>
+    <div id="storageInfo" class="note"></div>
+  </section>
+
+  <section id="tab-data" class="tab">
+    <h3>人口メッシュ（e-Stat 国勢調査 500m）</h3>
+    <p class="note">e-Statは外部からの直接取得を許可していないため、ZIPを端末にダウンロードしてから読込みます。範囲を指定すると、対象の1次メッシュのリンクがここに出ます。</p>
+    <div id="meshLinks"></div>
+    <label class="btn file">e-StatのZIP/TXTを読込む<input type="file" id="fileStat" accept=".zip,.txt,.csv" multiple hidden></label>
+    <div id="popInfo" class="note"></div>
+
+    <h3>GeoJSON（遺跡地図など）</h3>
+    <label class="btn file">GeoJSONを読込む<input type="file" id="fileGeo" accept=".geojson,.json" multiple hidden></label>
+    <div id="userInfo" class="note"></div>
+
+    <h3>書き出し</h3>
+    <p class="note">保存済み範囲のタイルとベクタをZIPで書き出します（QGIS等で利用可）。エコリス植生図タイルは再配布不可のため含めません。</p>
+    <select id="selExportArea"></select>
+    <button id="btnExport" class="btn">ZIPで書き出し</button>
+    <div id="expMsg" class="note"></div>
+
+    <h3>出典</h3>
+    <ul class="note credits">
+      <li>地理院タイル（国土地理院）</li>
+      <li>地質図：産総研地質調査総合センター「20万分の1日本シームレス地質図V2」（CC BY 4.0）</li>
+      <li>植生図：エコリス地図タイル（環境省生物多様性センター 自然環境保全基礎調査 植生調査結果を株式会社エコリスが加工）</li>
+      <li>旧市町村界：歴史的行政区域データセットβ版（CODH）、国土交通省「国土数値情報（行政区域データ）」をもとにNIIが加工</li>
+      <li>筆ポリゴン：農林水産省「筆ポリゴンデータ（2022年度公開）」（農研機構 公開のFlatGeobuf版を利用）</li>
+      <li>人口：総務省統計局 国勢調査 地域メッシュ統計（e-Stat）</li>
+    </ul>
+  </section>
+</aside>
+
+<script src="lib/leaflet.min.js"></script>
+<script src="lib/topojson-client.min.js"></script>
+<script src="lib/fflate.min.js"></script>
+<script src="lib/flatgeobuf-geojson.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
